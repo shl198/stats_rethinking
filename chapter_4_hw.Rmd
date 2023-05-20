@@ -1,0 +1,158 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# 4.6 homework
+```{r 4M1}
+sample_mu = rnorm(1e4, 0, 10)
+sample_sigma = rexp(1e4, 1)
+prior_h = rnorm(1e4, sample_mu, sample_sigma)
+dens(prior_h)
+
+
+library(tidyverse)
+sim <- tibble(mu=rnorm(1e4, 0, 10), sigma=rexp(1e4,rate=1)) %>%
+    mutate(y = rnorm(1e4, mean=mu, sd=sigma))
+ggplot(sim, aes(x=y)) +
+    geom_density() +
+    labs(x="y", y="Density")
+```
+```{r 4M2}
+m4m2 = quap(
+  alist(
+    y ~ dnorm(mu, sigma),
+    mu ~ dnorm(0, 10),
+    sigma ~ dexp(1)
+  )
+)
+```
+
+## 4M3
+y ~ Normal(mu, sigma)
+mu = a + b*x
+a ~ Normal(0, 10)
+b ~ Uniform(0, 1)
+sigma ~ Exponential(1)
+
+## 4M4
+height ~ Normal(mu, sigma)
+mu = a + b*(y - y_mean)
+a ~ Normal(100, 10)
+b ~ Normal(0, 10)
+sigma ~ Exponential(1)
+
+\begin{align}
+  y_i &\sim \text{Normal}(\mu_i,\sigma) \\
+  \mu_i &= \alpha + \beta x_i \\
+  \alpha &\sim \text{Normal}(0, 10) \\
+  \beta &\sim \text{Uniform}(0, 1) \\
+  \sigma &\sim \text{Exponential}(1)
+\end{align}
+
+```{r 4M4}
+n = 50
+tibble(group = seq_len(n),
+       alpha = rnorm(n, 100, 10),
+       beta = rnorm(n, 0, 10),
+       sigma = rexp(n, 1)) %>%
+  expand(nesting(group, alpha, beta, sigma), year = c(1, 2, 3)) %>%
+  mutate(height=rnorm(n(), alpha+beta*(year-mean(year)), sigma)) %>%
+  ggplot(aes(x=year, y=height, group=group)) +
+  geom_line() +
+  labs(x="Year", y="height")
+```
+## 4.5 Now suppose I remind you that every student got taller each year. Does this information lead you to change your choice of priors? How?
+Yes, beta should be always positive, so use lognormal distribution.
+beta ~ log-normal(1, 0.5)
+
+```{r 4M5}
+library(tidybayes)
+samples = rlnorm(1e4, 1, 0.5)
+bounds = mean_hdi(samples, .width=0.89)
+ggplot() +
+  stat_function(data = tibble(x = c(0, 10)), mapping = aes(x = x),
+                geom = "line", fun = dlnorm,
+                args = list(meanlog = 1, sdlog = 0.5)) +
+  geom_ribbon(data = tibble(x = seq(bounds$ymin, bounds$ymax, 0.01)),
+              aes(x = x, ymin = 0, ymax = dlnorm(x, 1, 0.5)),
+              alpha = 0.8) +
+  scale_x_continuous(breaks = seq(0, 10, 2)) +
+  labs(x = expression(beta), y = "Density")
+```
+## 4M6 Now suppose I tell you that the variance among heights for students of the same age is never more than 64cm. How does this lead you to revise your priors?
+Change sigma to Uniform(0,8)
+
+## 4M7 Refit model m4.3 from the chapter, but omit the mean weight xbar this time. Compare the new model’s posterior to that of the original model. In particular, look at the covariance among the parameters. What is different? Then compare the posterior predictions of both models.
+```{r}
+# Load in data
+data("Howell1")
+d <- Howell1
+d2 <- d[ d$age >= 18,]
+# define formula
+m7_formulas <- alist(
+  height ~ dnorm(mu, sigma),
+  mu <- a + b*weight,
+  a ~ dnorm(178, 20),
+  b ~ dlnorm(0, 1),
+  sigma ~ dunif(0, 50)
+)
+m7_model <- quap(m7_formulas, data=d2)
+# get results
+print(precis(m7_model))
+print(round(vcov(m7_model), 5))
+
+# plot prediction
+plot(height ~ weight, data=d2, col=rangi2)
+m7.post <- extract.samples(m7_model)
+m7.a_map <- mean(m7.post$a)
+m7.b_map <- mean(m7.post$b)
+curve(m7.a_map + m7.b_map*x, add=TRUE)
+```
+```{r 4M7 use brm to fit}
+library(rethinking)
+library(tidyverse)
+library(brms)
+
+data(Howell1)
+how_dat <- Howell1 %>%
+  filter(age >= 18) %>%
+  mutate(weight_c = weight - mean(weight))
+
+b4.3 <- brm(height ~ 1 + weight_c, data = how_dat, family = gaussian,
+            prior = c(prior(normal(178, 20), class = Intercept),
+                      prior(lognormal(0, 1), class = b, lb = 0),
+                      prior(uniform(0, 50), class = sigma)),seed = 1234)
+# a = 1
+```
+
+
+## 4H1 The weights listed below were recorded in the !Kung census, but heights were not recorded for these individuals. Provide predicted heights and 89% intervals for each of these individuals. That is, fill in the table below, using model-based predictions.
+
+```{r 4H1}
+h1.weights <- data.frame(weight=c(46.95, 43.72, 64.78, 32.59, 54.63))
+# Predict heights for the given weights
+h1.h.pred <- m7.a_map + m7.b_map * h1.weights$weight
+print(h1.h.pred)
+# Predict height 89% interval
+sim.h1.height <- sim(m7_model, data=h1.weights)
+str(sim.h1.height)
+h1.h.PI <- apply(sim.h1.height, 2, PI, prob=0.89)
+h1.h.PI
+
+
+tibble(individual = 1:5,
+       weight = c(46.95, 43.72, 64.78, 32.59, 54.63)) %>%
+  mutate(weight_c = weight - mean(how_dat$weight)) %>%
+  add_predicted_draws(m7_model) %>%
+  group_by(individual, weight) %>%
+  mean_qi(.prediction, .width = 0.89) %>%
+  mutate(range = glue("[{sprintf('%0.1f', .lower)}--",
+                      "{sprintf('%0.1f', .upper)}]"),
+         .prediction = sprintf("%0.1f", .prediction)) %>%
+  select(individual, weight, exp = .prediction, range) %>%
+  kbl(align = "c", booktabs = TRUE,
+      col.names = c("Individual", "weight", "expected height", "89% interval"))
+```
+
+

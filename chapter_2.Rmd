@@ -1,0 +1,68 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r template to calculate post probability}
+n = 50
+# define grid
+p_grid <- seq(0, 1, length.out=n)
+# define prior
+prior <- rep(1, n)
+# compute likelihood at each value in grid
+likelihood <- dbinom(3, size=3, prob = p_grid)
+# compute product of prior and likelihood
+unstd_post <- prior * likelihood
+# normalize post
+post <- unstd_post / sum(unstd_post)
+
+plot(p_grid, post, type='b', xlab='prob of water', ylab='post')
+
+```
+Guassian approximation is quadratic approximation
+Steps:
+1. find posterior mode. find the peak of post
+2. estimate curvature near the peak.
+
+```{r quadratic approximation}
+library(rethinking)
+globe_qa <- quap(
+    alist(
+      w ~ dbinom(9, p), # binomial dist
+      p ~ dunif(0,1) # prior
+    ),
+    data = list(w=6))
+precis(globe_qa)
+```
+```{r}
+# analytical calculation
+w <- 6
+n <- 9
+curve( dbeta(x, w+1, n-w+1), from=0, to=1)
+# quadratic approximation
+curve(dnorm(x, 0.67, 0.16), lty=2, add=TRUE)
+```
+```{r practice 2M2}
+n = 50
+# define grid
+p_grid <- seq(0, 1, length.out=n)
+# define prior
+prior <- c()
+for (p in p_grid) {
+  if (p < 0.5) {
+    prior = c(prior, 0)}
+  else {
+    prior = c(prior, 0.3)
+  }
+}
+# compute likelihood at each value in grid
+likelihood <- dbinom(6, size=9, prob = p_grid)
+# compute product of prior and likelihood
+unstd_post <- prior * likelihood
+# normalize post
+post <- unstd_post / sum(unstd_post)
+
+plot(p_grid, post, type='b', xlab='prob of water', ylab='post')
+```
+
